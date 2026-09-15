@@ -1,7 +1,8 @@
 {
-  "wikiDir": "/home/me/wiki-clone",
-  "model": "",
+  "wikiDir": "/path/to/wiki-clone",
+  "model": "opencode-go/glm-5.3-flash",
   "port": 7781,
   "branch": "main",
-  "rulesFile": "AGENTS.md"
+  "rulesFile": "AGENTS.md",
+  "inboxDir": "inbox"
 }

@@ -11,12 +11,16 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfgFile = process.argv[2] || path.join(here, 'companion.config.json');
 const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
-const { wikiDir, model = '', port = 7781, branch = 'main', rulesFile = 'AGENTS.md' } = cfg;
-if (!wikiDir) {
-  console.error('companion.config.json needs { "wikiDir": "/path/to/wiki-clone" }');
+// Trim strings so shell-style escapes / trailing spaces in JSON can't create bogus paths.
+const cfgTrimmed = Object.fromEntries(
+  Object.entries(cfg).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v])
+);
+const { wikiDir, model = '', port = 7781, branch = 'main', rulesFile = 'AGENTS.md', inboxDir = 'inbox' } = cfgTrimmed;
+if (!wikiDir || !fs.existsSync(path.join(wikiDir, '.git'))) {
+  console.error(`wikiDir must point at a git clone of your wiki — got: ${JSON.stringify(wikiDir)}`);
   process.exit(1);
 }
-const inboxDir = path.join(wikiDir, 'inbox');
+const inbox = path.join(wikiDir, inboxDir);
 
 // execFileSync (no shell) so titles/messages can't inject commands.
 const git = (...args) => execFileSync('git', args, { cwd: wikiDir, encoding: 'utf8' });
@@ -41,12 +45,13 @@ function commitPush(message) {
 }
 
 function ingest(files) {
-  const list = files.join('\n  - ');
+  const list = files.map((f) => path.join(inboxDir, f)).join('\n  - ');
   const prompt =
-    `New capture(s) in inbox/:\n  - ${list}\n\n` +
+    `New capture(s) in ${inboxDir}/:\n  - ${list}\n\n` +
     `Read ${rulesFile} and ingest each capture into the wiki per those rules: ` +
-    `create/update the appropriate notes with proper links, then set each inbox ` +
-    `file's frontmatter to "status: processed".`;
+    `create/update the appropriate notes with proper links, update index.md and log.md ` +
+    `as the rules require, then set each capture file's frontmatter to "status: processed" ` +
+    `(inbox files only — never touch anything under raw/).`;
   const p = spawn('opencode', ['run', '--model', model, prompt], { cwd: wikiDir, stdio: 'inherit' });
   p.on('exit', (code) => {
     console.log(`[companion] opencode exited ${code}`);
@@ -60,15 +65,15 @@ function handle(item, res) {
   } catch (e) {
     console.log('[companion] pull skipped:', (e.stderr || e.message).split('\n')[0]);
   }
-  fs.mkdirSync(inboxDir, { recursive: true });
+  fs.mkdirSync(inbox, { recursive: true });
   const name = `${new Date().toISOString().slice(0, 10)}-${slugify(item.title)}.md`;
-  fs.writeFileSync(path.join(inboxDir, name), mdFor(item));
+  fs.writeFileSync(path.join(inbox, name), mdFor(item));
   commitPush(`capture: ${item.title.replace(/"/g, '')}`);
   // Also pick up any raw captures the extension committed via the GitHub fallback.
   const pending = fs
-    .readdirSync(inboxDir)
+    .readdirSync(inbox)
     .filter((f) => f.endsWith('.md'))
-    .filter((f) => /status:\s*unprocessed/.test(fs.readFileSync(path.join(inboxDir, f), 'utf8').slice(0, 400)));
+    .filter((f) => /status:\s*unprocessed/.test(fs.readFileSync(path.join(inbox, f), 'utf8').slice(0, 400)));
   if (model && pending.length) ingest(pending);
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ ok: true, file: name, ingest: model ? `queued (${pending.length} file(s))` : 'skipped — no model configured' }));
@@ -92,4 +97,4 @@ http
       res.end();
     }
   })
-  .listen(port, '127.0.0.1', () => console.log(`[companion] :${port} → ${wikiDir} (model: ${model || 'none'})`));
+  .listen(port, '127.0.0.1', () => console.log(`[companion] :${port} → ${wikiDir} (inbox: ${inboxDir}, model: ${model || 'none'})`));
