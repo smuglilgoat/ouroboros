@@ -73,7 +73,7 @@ function handle(item, res) {
   const pending = fs
     .readdirSync(inbox)
     .filter((f) => f.endsWith('.md'))
-    .filter((f) => /status:\s*unprocessed/.test(fs.readFileSync(path.join(inbox, f), 'utf8').slice(0, 400)));
+    .filter((f) => /status:\s*unprocessed/.test(fs.readFileSync(path.join(inbox, f), 'utf8')));
   if (model && pending.length) ingest(pending);
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ ok: true, file: name, ingest: model ? `queued (${pending.length} file(s))` : 'skipped — no model configured' }));
