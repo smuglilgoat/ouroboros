@@ -21,4 +21,6 @@
 - [CODE] 2026-09-15 — YouTube caption track is read MAIN-world (`ytInitialPlayerResponse` / `movie_player.getPlayerResponse()`), fetched from the SW (host permission bypasses CORS), parsed from `&fmt=json3` with consecutive-duplicate collapse for ASR rolling text.
 
 ## [OUTCOMES]
-- [CODE] 2026-09-15 — Unit/integration tests pass. UNCONFIRMED: end-to-end run against the real wiki repo + real video (needs user PAT, wiki clone, opencode installed).
+- [CODE] 2026-09-15 — Unit/integration tests pass.
+- [CODE] 2026-09-15 — First real ingest completed end-to-end (manual rerun after path fix): Positions revue article → 4 entities, 5 concepts, 1 source page; merged to main in The Aerie and pushed. Companion HTTP loop itself still UNCONFIRMED live (next real capture via extension will exercise it).
+- [CODE] 2026-09-15 — The Aerie's AGENTS.md: raw/ is user-owned/immutable; captures stage in inbox/ (tool-owned); opencode creates a feature branch per ingest rather than committing to main directly — merge to main afterwards is a separate step.
