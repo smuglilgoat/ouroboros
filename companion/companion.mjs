@@ -33,14 +33,33 @@ const mdFor = (item) =>
   `captured: ${item.capturedAt || new Date().toISOString()}\nstatus: unprocessed\n---\n\n${item.transcript}\n`;
 
 function commitPush(message) {
+  try { git('add', '-A'); } catch {}
   try {
-    git('add', '-A');
     git('commit', '-m', message);
+  } catch (e) {
+    // "nothing to commit" is the normal no-op case; real failures surface at push.
+  }
+  try {
     git('push');
     return true;
   } catch (e) {
     console.log('[companion] git:', (e.stderr || e.stdout || e.message).split('\n')[0]);
     return false;
+  }
+}
+
+function mergeToMain(branch) {
+  try {
+    git('checkout', 'main');
+    try {
+      git('merge', '--ff-only', branch);
+    } catch {
+      // main moved (e.g. obsidian-git vault backup) — take a real merge
+      git('merge', '--no-edit', branch);
+    }
+    commitPush(`merge: ${branch}`);
+  } catch (e) {
+    console.log('[companion] merge failed:', (e.stderr || e.message).split('\n')[0]);
   }
 }
 
@@ -62,7 +81,9 @@ function ingest(files) {
   );
   p.on('exit', (code) => {
     console.log(`[companion] opencode exited ${code}`);
-    commitPush(`ingest: ${files.length} capture(s)`);
+    const branch = git('branch', '--show-current').trim();
+    if (branch && branch !== 'main') mergeToMain(branch);
+    else commitPush(`ingest: ${files.length} capture(s)`);
   });
 }
 
