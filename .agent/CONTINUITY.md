@@ -7,7 +7,7 @@
 - [USER] 2026-09-15 — HTML page capture = selection, fallback full page text.
 - [USER] 2026-09-15 — Wiki repo/rules path/model/port all configurable; nothing hardcoded.
 - [USER] 2026-09-15 — opencode edits the local wiki clone directly; companion commits/pushes.
-- [USER] 2026-09-15 — Companion: single Node script, stdlib only (default port 7781).
+- [USER] 2026-09-15 — Companion: single Node script, stdlib only (default port 7781). CLI logging added [CODE] 2026-09-15: timestamps, ok/warn/err levels, ANSI colors when TTY, clean output to log files (b757a05).
 - [TOOL] 2026-09-15 — Verified: `opencode run [message..]` is the non-interactive mode, `--model provider/model` supported (opencode.ai/docs/cli).
 
 ## [MILESTONE]
