@@ -52,7 +52,14 @@ function ingest(files) {
     `create/update the appropriate notes with proper links, update index.md and log.md ` +
     `as the rules require, then set each capture file's frontmatter to "status: processed" ` +
     `(inbox files only — never touch anything under raw/).`;
-  const p = spawn('opencode', ['run', '--model', model, prompt], { cwd: wikiDir, stdio: 'inherit' });
+  // bash -c with explicit cd: spawning opencode directly with cwd: wikiDir
+  // starts it in the wrong project root (observed: it picked up the
+  // companion's own cwd), which then auto-rejects the wiki as external.
+  const p = spawn(
+    'bash',
+    ['-c', 'cd "$1" && exec opencode run --model "$2" "$3"', '_', wikiDir, model, prompt],
+    { stdio: 'inherit' }
+  );
   p.on('exit', (code) => {
     console.log(`[companion] opencode exited ${code}`);
     commitPush(`ingest: ${files.length} capture(s)`);
