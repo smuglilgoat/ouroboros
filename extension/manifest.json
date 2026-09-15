@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Ouroboros Wiki Capture",
+  "version": "0.1.0",
+  "description": "Capture YouTube transcripts / page text into your Obsidian wiki (GitHub + opencode ingest).",
+  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "host_permissions": ["https://api.github.com/*", "http://localhost:7781/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html" },
+  "options_page": "options.html"
+}

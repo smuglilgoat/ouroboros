@@ -1,0 +1,7 @@
+{
+  "wikiDir": "/home/me/wiki-clone",
+  "model": "",
+  "port": 7781,
+  "branch": "main",
+  "rulesFile": "AGENTS.md"
+}
