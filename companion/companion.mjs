@@ -8,6 +8,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// --- logging -----------------------------------------------------------
+const TTY = process.stdout.isTTY && !('NO_COLOR' in process.env);
+const paint = (code, s) => (TTY ? `\x1b[${code}m${s}\x1b[0m` : s);
+const dim = (s) => paint(2, s);
+const bold = (s) => paint(1, s);
+const red = (s) => paint(31, s);
+const green = (s) => paint(32, s);
+const yellow = (s) => paint(33, s);
+const cyan = (s) => paint(36, s);
+const ts = () => new Date().toTimeString().slice(0, 8);
+const log = (msg) => console.log(`${dim(ts())} ${msg}`);
+
+// --- config ------------------------------------------------------------
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfgFile = process.argv[2] || path.join(here, 'companion.config.json');
 const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
@@ -17,7 +30,7 @@ const cfgTrimmed = Object.fromEntries(
 );
 const { wikiDir, model = '', port = 7781, branch = 'main', rulesFile = 'AGENTS.md', inboxDir = 'inbox' } = cfgTrimmed;
 if (!wikiDir || !fs.existsSync(path.join(wikiDir, '.git'))) {
-  console.error(`wikiDir must point at a git clone of your wiki — got: ${JSON.stringify(wikiDir)}`);
+  console.error(`${red('✗ wikiDir must point at a git clone of your wiki')} — got: ${JSON.stringify(wikiDir)}`);
   process.exit(1);
 }
 const inbox = path.join(wikiDir, inboxDir);
@@ -36,14 +49,15 @@ function commitPush(message) {
   try { git('add', '-A'); } catch {}
   try {
     git('commit', '-m', message);
-  } catch (e) {
+  } catch {
     // "nothing to commit" is the normal no-op case; real failures surface at push.
   }
   try {
     git('push');
+    log(`${green('✓ pushed')} ${dim(message)}`);
     return true;
   } catch (e) {
-    console.log('[companion] git:', (e.stderr || e.stdout || e.message).split('\n')[0]);
+    log(`${red('✗ push failed')} ${(e.stderr || e.stdout || e.message).split('\n')[0]}`);
     return false;
   }
 }
@@ -53,18 +67,22 @@ function mergeToMain(branch) {
     git('checkout', 'main');
     try {
       git('merge', '--ff-only', branch);
+      log(`${green('✓ fast-forward')} ${dim(branch)}`);
     } catch {
       // main moved (e.g. obsidian-git vault backup) — take a real merge
       git('merge', '--no-edit', branch);
+      log(`${yellow('◆ merge commit')} ${dim(`${branch} → main (main had moved)`)}`);
     }
     commitPush(`merge: ${branch}`);
   } catch (e) {
-    console.log('[companion] merge failed:', (e.stderr || e.message).split('\n')[0]);
+    log(`${red('✗ merge failed')} ${(e.stderr || e.message).split('\n')[0]}`);
   }
 }
 
 function ingest(files) {
   const list = files.map((f) => path.join(inboxDir, f)).join('\n  - ');
+  log(`${cyan('↻ ingest')} ${files.length} file(s) via ${cyan(model)}`);
+  log(dim(`  ${files.map((f) => path.join(inboxDir, f)).join(', ')}`));
   const prompt =
     `New capture(s) in ${inboxDir}/:\n  - ${list}\n\n` +
     `Read ${rulesFile} and ingest each capture into the wiki per those rules: ` +
@@ -80,22 +98,29 @@ function ingest(files) {
     { stdio: 'inherit' }
   );
   p.on('exit', (code) => {
-    console.log(`[companion] opencode exited ${code}`);
-    const branch = git('branch', '--show-current').trim();
-    if (branch && branch !== 'main') mergeToMain(branch);
-    else commitPush(`ingest: ${files.length} capture(s)`);
+    log(code === 0 ? `${green('✓ opencode finished')}` : `${red(`✗ opencode exited ${code}`)}`);
+    try {
+      const branch = git('branch', '--show-current').trim();
+      if (branch && branch !== 'main') mergeToMain(branch);
+      else commitPush(`ingest: ${files.length} capture(s)`);
+    } catch (e) {
+      log(`${red('✗ post-ingest git failed')} ${(e.stderr || e.message).split('\n')[0]}`);
+    }
   });
 }
 
 function handle(item, res) {
+  log(`${cyan('↣ capture')} ${bold(item.title.slice(0, 70))}${item.title.length > 70 ? dim('…') : ''}`);
   try {
     git('pull', '--ff-only', 'origin', branch);
+    log(`${green('✓ pulled')} ${dim(`origin/${branch}`)}`);
   } catch (e) {
-    console.log('[companion] pull skipped:', (e.stderr || e.message).split('\n')[0]);
+    log(`${yellow('! pull skipped')} ${(e.stderr || e.message).split('\n')[0]}`);
   }
   fs.mkdirSync(inbox, { recursive: true });
   const name = `${new Date().toISOString().slice(0, 10)}-${slugify(item.title)}.md`;
   fs.writeFileSync(path.join(inbox, name), mdFor(item));
+  log(`${green('✓ saved')} ${dim(path.join(inboxDir, name))}`);
   commitPush(`capture: ${item.title.replace(/"/g, '')}`);
   // Also pick up any raw captures the extension committed via the GitHub fallback.
   const pending = fs
@@ -116,6 +141,7 @@ http
         try {
           handle(JSON.parse(body), res);
         } catch (e) {
+          log(`${red('✗ bad request')} ${e.message}`);
           res.writeHead(500, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: e.message }));
         }
@@ -125,4 +151,9 @@ http
       res.end();
     }
   })
-  .listen(port, '127.0.0.1', () => console.log(`[companion] :${port} → ${wikiDir} (inbox: ${inboxDir}, model: ${model || 'none'})`));
+  .listen(port, '127.0.0.1', () =>
+    log(
+      `${bold(green('● companion'))} ${cyan(`:${port}`)} → ${bold(wikiDir)}\n` +
+        `  inbox: ${inboxDir}   model: ${model ? cyan(model) : yellow('none')}`
+    )
+  );
