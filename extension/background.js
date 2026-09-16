@@ -1,7 +1,3 @@
-// parseJson3 lives in lib/parse.mjs (unit-tested); the SW fetches the caption
-// track and parses it here.
-import { parseJson3 } from './lib/parse.mjs';
-
 const DEFAULTS = {
   companionUrl: 'http://localhost:7781/ingest',
   repo: '', // "owner/repo"
@@ -17,8 +13,10 @@ const slugify = (t) =>
 
 // Injected into the page's MAIN world; must be fully self-contained AND
 // synchronous (async funcs' promises are not reliably awaited by executeScript
-// in the MAIN world). Caption fetching happens in the service worker, which
-// bypasses CORS for hosts in manifest host_permissions.
+// in the MAIN world). YouTube captions are fetched here with sync XHR:
+// same-origin, carries the page's session, and the baseUrl's origin token is
+// valid in this context (SW fetches get 200-with-empty-body).
+// json3 parsing is duplicated from lib/parse.mjs (unit-tested) — keep in sync.
 function captureFunc() {
   const isYT = /(^|\.)youtube\.com$/.test(location.hostname);
   if (isYT) {
@@ -29,9 +27,22 @@ function captureFunc() {
     }
     const track = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.[0];
     if (!track) return { ok: false, error: 'No captions available on this video' };
+    const x = new XMLHttpRequest();
+    x.open('GET', track.baseUrl + '&fmt=json3', false);
+    x.send();
+    if (x.status !== 200) return { ok: false, error: `Caption fetch failed (${x.status})` };
+    let data;
+    try { data = JSON.parse(x.responseText); } catch { return { ok: false, error: 'Caption body unreadable' }; }
+    const lines = (data.events || [])
+      .map((e) => (e.segs || []).map((s) => s.utf8 || '').join('').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    const out = [];
+    for (const l of lines) if (l !== out[out.length - 1]) out.push(l);
+    const transcript = out.join(' ');
+    if (!transcript) return { ok: false, error: 'Caption track was empty' };
     return {
       ok: true,
-      captionUrl: track.baseUrl,
+      transcript,
       title: pr?.videoDetails?.title || document.title,
       url: location.href,
       source: 'youtube',
@@ -56,13 +67,6 @@ async function captureTab(tabId) {
   }
   const meta = injected?.result;
   if (!meta) return { ok: false, error: 'Could not access the page' };
-  if (!meta.ok) return meta;
-  if (meta.captionUrl) {
-    const r = await fetch(meta.captionUrl + '&fmt=json3'); // host permission → no CORS
-    if (!r.ok) return { ok: false, error: `Caption fetch failed (${r.status})` };
-    meta.transcript = parseJson3(await r.json());
-    if (!meta.transcript) return { ok: false, error: 'Caption track was empty' };
-  }
   return meta;
 }
 
