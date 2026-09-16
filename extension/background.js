@@ -1,4 +1,5 @@
-import { parseJson3 } from './lib/parse.mjs';
+// parseJson3 lives in lib/parse.mjs (unit-tested); the in-page captureFunc
+// duplicates it because injected functions must be self-contained.
 
 const DEFAULTS = {
   companionUrl: 'http://localhost:7781/ingest',
@@ -14,7 +15,11 @@ const slugify = (t) =>
   t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'capture';
 
 // Injected into the page's MAIN world; must be fully self-contained.
-function captureFunc() {
+// YouTube caption fetch happens here (same-origin) because a service-worker
+// fetch would be CORS-blocked without youtube host permissions.
+// NOTE: the json3 parsing below is duplicated from lib/parse.mjs (which is
+// unit-tested) — injected functions must be self-contained, keep in sync.
+async function captureFunc() {
   const isYT = /(^|\.)youtube\.com$/.test(location.hostname);
   if (isYT) {
     let pr = null;
@@ -24,9 +29,19 @@ function captureFunc() {
     }
     const track = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.[0];
     if (!track) return { ok: false, error: 'No captions available on this video' };
+    const r = await fetch(track.baseUrl + '&fmt=json3');
+    if (!r.ok) return { ok: false, error: `Caption fetch failed (${r.status})` };
+    const data = await r.json();
+    const lines = (data.events || [])
+      .map((e) => (e.segs || []).map((s) => s.utf8 || '').join('').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    const out = [];
+    for (const l of lines) if (l !== out[out.length - 1]) out.push(l);
+    const transcript = out.join(' ');
+    if (!transcript) return { ok: false, error: 'Caption track was empty' };
     return {
       ok: true,
-      captionUrl: track.baseUrl,
+      transcript,
       title: pr?.videoDetails?.title || document.title,
       url: location.href,
       source: 'youtube',
@@ -46,14 +61,6 @@ async function captureTab(tabId) {
   });
   const meta = injected?.result;
   if (!meta) return { ok: false, error: 'Could not access the page' };
-  if (!meta.ok) return meta;
-  if (meta.captionUrl) {
-    // Service worker fetch + host permission bypasses the page CORS.
-    const r = await fetch(meta.captionUrl + '&fmt=json3');
-    if (!r.ok) return { ok: false, error: `Caption fetch failed (${r.status})` };
-    meta.transcript = parseJson3(await r.json());
-    if (!meta.transcript) return { ok: false, error: 'Caption track was empty' };
-  }
   return meta;
 }
 
