@@ -191,7 +191,25 @@ function captureFunc() {
   return { ok: true, transcript, title: document.title, url: location.href, source: 'page' };
 }
 
+// Kicks open the transcript panel so rung 4 (DOM scrape) has data to read.
+// Sync, best-effort: expands the description, clicks "Show transcript".
+function openTranscriptFunc() {
+  const expander = document.querySelector('#description-inline-expander #expand, ytd-watch-metadata #expand');
+  if (expander) { try { expander.click(); } catch {} }
+  const btn =
+    document.querySelector('ytd-video-description-transcript-section-renderer button') ||
+    [...document.querySelectorAll('button[aria-label]')].find((b) => /transcript/i.test(b.getAttribute('aria-label') || ''));
+  if (btn) { try { btn.click(); } catch {} }
+  return !!btn;
+}
+
 async function captureTab(tabId) {
+  // For YouTube: make the site's own UI fetch the transcript (network rungs are
+  // pot-gated), give the panel a moment to render, then capture.
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: openTranscriptFunc });
+    await new Promise((r) => setTimeout(r, 2000));
+  } catch {}
   let injected;
   try {
     [injected] = await chrome.scripting.executeScript({
