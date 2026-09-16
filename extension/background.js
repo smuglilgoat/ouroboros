@@ -217,11 +217,13 @@ async function captureTab(tabId) {
   // pot-gated). Each phase needs its own injection + wait: the "Show transcript"
   // button doesn't exist until the description has expanded, and the panel
   // doesn't render until the click.
+  let phaseInfo = '';
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: expandDescriptionFunc });
+    const [exp] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: expandDescriptionFunc });
     await new Promise((r) => setTimeout(r, 800));
-    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: clickTranscriptFunc });
+    const [clk] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: clickTranscriptFunc });
     await new Promise((r) => setTimeout(r, 2500));
+    phaseInfo = `expand:${exp?.result ?? '?'} click:${clk?.result ?? '?'}`;
   } catch {}
   let injected;
   try {
@@ -235,6 +237,7 @@ async function captureTab(tabId) {
   }
   const meta = injected?.result;
   if (!meta) return { ok: false, error: 'Could not access the page' };
+  if (!meta.ok && phaseInfo) meta.error = `${meta.error} [${phaseInfo}]`;
   return meta;
 }
 
