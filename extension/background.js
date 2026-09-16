@@ -31,11 +31,22 @@ function captureFunc() {
     x.open('GET', track.baseUrl + '&fmt=json3', false);
     x.send();
     if (x.status !== 200) return { ok: false, error: `Caption fetch failed (${x.status})` };
-    let data;
-    try { data = JSON.parse(x.responseText); } catch { return { ok: false, error: 'Caption body unreadable' }; }
-    const lines = (data.events || [])
-      .map((e) => (e.segs || []).map((s) => s.utf8 || '').join('').replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
+    const body = x.responseText.trim();
+    let lines;
+    if (body.startsWith('{')) {
+      // json3 (as requested)
+      let data;
+      try { data = JSON.parse(body); } catch { return { ok: false, error: `Caption body unreadable: ${body.slice(0, 80)}` }; }
+      lines = (data.events || [])
+        .map((e) => (e.segs || []).map((s) => s.utf8 || '').join(''));
+    } else if (body.startsWith('<')) {
+      // timedtext XML (srv) fallback
+      const doc = new DOMParser().parseFromString(body, 'text/xml');
+      lines = [...doc.querySelectorAll('text')].map((n) => n.textContent);
+    } else {
+      return { ok: false, error: `Caption body empty/unknown (len ${body.length}): ${body.slice(0, 80)}` };
+    }
+    lines = lines.map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const out = [];
     for (const l of lines) if (l !== out[out.length - 1]) out.push(l);
     const transcript = out.join(' ');
