@@ -164,15 +164,18 @@ function captureFunc() {
       } catch (e) { plStatus = 'err:' + String(e.message).slice(0, 40); }
     }
 
-    // rung 4: scrape the transcript panel if it's open
-    let domSegs = document.querySelectorAll('ytd-transcript-segment-renderer .segment-text');
+    // rung 4: scrape the transcript panel if it's open. Handles BOTH YouTube UIs:
+    //   new (2026+): yt-section-list-renderer → transcript-segment-view-model → span.ytAttributedStringHost
+    //   old: ytd-transcript-renderer → ytd-transcript-segment-renderer → .segment-text
+    let domSegs = document.querySelectorAll('transcript-segment-view-model span.ytAttributedStringHost');
     if (!domSegs.length)
-      domSegs = document.querySelectorAll('ytd-transcript-segment-renderer yt-formatted-string.segment-text, ytd-transcript-segment-list-renderer yt-formatted-string');
+      domSegs = document.querySelectorAll('ytd-transcript-segment-renderer .segment-text, ytd-transcript-segment-renderer yt-formatted-string.segment-text, ytd-transcript-segment-list-renderer yt-formatted-string');
     let domCount = 0;
     if (!transcript && domSegs.length) {
-      transcript = dedupe([...domSegs].map((n) => n.textContent));
+      // strip leading timestamps (m:ss / h:mm:ss) — fallback segment text may include them
+      transcript = dedupe([...domSegs].map((n) => n.textContent.replace(/^\s*\d{1,2}:\d{2}(:\d{2})?\s*/, '')));
       domCount = domSegs.length;
-    }
+    } else domCount = domSegs.length;
 
     if (!transcript)
       return {
