@@ -13,44 +13,111 @@ const slugify = (t) =>
 
 // Injected into the page's MAIN world; must be fully self-contained AND
 // synchronous (async funcs' promises are not reliably awaited by executeScript
-// in the MAIN world). YouTube captions are fetched here with sync XHR:
-// same-origin, carries the page's session, and the baseUrl's origin token is
-// valid in this context (SW fetches get 200-with-empty-body).
-// json3 parsing is duplicated from lib/parse.mjs (unit-tested) — keep in sync.
+// in the MAIN world). Transcript ladder (first success wins), all via sync
+// XHR from the page (same-origin, credentialed):
+//   1. timedtext with the player response's caption baseUrl
+//   2. innerTube get_transcript (what the "Show transcript" panel calls) using
+//      params from ytInitialData + real ytcfg context
+//   3. fresh innerTube /player request → session-bound caption baseUrl → timedtext
+// timedtext/json3 parsing mirrors lib/parse.mjs (unit-tested) — keep in sync.
 function captureFunc() {
   const isYT = /(^|\.)youtube\.com$/.test(location.hostname);
   if (isYT) {
+    const dedupe = (raw) => {
+      const lines = raw.map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const out = [];
+      for (const l of lines) if (l !== out[out.length - 1]) out.push(l);
+      return out.join(' ');
+    };
+    const parseCaptionBody = (body) => {
+      const b = body.trim();
+      if (b.startsWith('{')) {
+        try {
+          const d = JSON.parse(b);
+          return dedupe((d.events || []).map((e) => (e.segs || []).map((s) => s.utf8 || '').join('')));
+        } catch { return ''; }
+      }
+      if (b.startsWith('<')) {
+        try {
+          const doc = new DOMParser().parseFromString(b, 'text/xml');
+          return dedupe([...doc.querySelectorAll('text, p')].map((n) => n.textContent));
+        } catch { return ''; }
+      }
+      return '';
+    };
+    const fetchCaptionText = (baseUrl) => {
+      const x = new XMLHttpRequest();
+      x.open('GET', baseUrl + '&fmt=json3', false);
+      x.send();
+      return x.status === 200 ? parseCaptionBody(x.responseText) : '';
+    };
+    const walkFind = (o, key) => {
+      if (!o || typeof o !== 'object') return null;
+      if (o[key]) return o[key];
+      for (const v of Array.isArray(o) ? o : Object.values(o)) {
+        const r = walkFind(v, key);
+        if (r) return r;
+      }
+      return null;
+    };
+    const collectSegments = (o, acc) => {
+      if (Array.isArray(o)) o.forEach((v) => collectSegments(v, acc));
+      else if (o && typeof o === 'object') {
+        if (o.transcriptSegmentRenderer) acc.push(o.transcriptSegmentRenderer);
+        Object.values(o).forEach((v) => collectSegments(v, acc));
+      }
+    };
+
     let pr = null;
     try { pr = window.ytInitialPlayerResponse; } catch {}
-    if (!pr?.captions) {
+    if (!pr?.videoDetails) {
       try { pr = document.getElementById('movie_player').getPlayerResponse(); } catch {}
     }
     const track = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.[0];
-    if (!track) return { ok: false, error: 'No captions available on this video' };
-    const x = new XMLHttpRequest();
-    x.open('GET', track.baseUrl + '&fmt=json3', false);
-    x.send();
-    if (x.status !== 200) return { ok: false, error: `Caption fetch failed (${x.status})` };
-    const body = x.responseText.trim();
-    let lines;
-    if (body.startsWith('{')) {
-      // json3 (as requested)
-      let data;
-      try { data = JSON.parse(body); } catch { return { ok: false, error: `Caption body unreadable: ${body.slice(0, 80)}` }; }
-      lines = (data.events || [])
-        .map((e) => (e.segs || []).map((s) => s.utf8 || '').join(''));
-    } else if (body.startsWith('<')) {
-      // timedtext XML (srv) fallback
-      const doc = new DOMParser().parseFromString(body, 'text/xml');
-      lines = [...doc.querySelectorAll('text')].map((n) => n.textContent);
-    } else {
-      return { ok: false, error: `Caption body empty/unknown (len ${body.length}): ${body.slice(0, 80)}` };
+
+    // rung 1: timedtext from the player response's baseUrl
+    let transcript = track ? fetchCaptionText(track.baseUrl) : '';
+
+    // rung 2: innerTube get_transcript — same request the "Show transcript"
+    // panel makes; params live in ytInitialData
+    if (!transcript) {
+      try {
+        const ctx = window.ytcfg && (window.ytcfg.get ? window.ytcfg.get('INNERTUBE_CONTEXT') : window.ytcfg.data_?.INNERTUBE_CONTEXT);
+        const ep = walkFind(window.ytInitialData, 'getTranscriptEndpoint');
+        if (ctx && ep?.params) {
+          const x = new XMLHttpRequest();
+          x.open('POST', '/youtubei/v1/get_transcript?prettyPrint=false', false);
+          x.setRequestHeader('content-type', 'application/json');
+          x.send(JSON.stringify({ context: ctx, params: ep.params }));
+          if (x.status === 200) {
+            const segs = [];
+            collectSegments(JSON.parse(x.responseText), segs);
+            transcript = dedupe(segs.map((s) => (s.snippet?.runs || []).map((r) => r.text || '').join('')));
+          }
+        }
+      } catch {}
     }
-    lines = lines.map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    const out = [];
-    for (const l of lines) if (l !== out[out.length - 1]) out.push(l);
-    const transcript = out.join(' ');
-    if (!transcript) return { ok: false, error: 'Caption track was empty' };
+
+    // rung 3: fresh innerTube /player request → session-bound caption URL
+    if (!transcript) {
+      try {
+        const ctx = window.ytcfg && (window.ytcfg.get ? window.ytcfg.get('INNERTUBE_CONTEXT') : window.ytcfg.data_?.INNERTUBE_CONTEXT);
+        const videoId = pr?.videoDetails?.videoId || (location.search.match(/[?&]v=([\w-]+)/) || [])[1];
+        if (ctx && videoId) {
+          const x = new XMLHttpRequest();
+          x.open('POST', '/youtubei/v1/player?prettyPrint=false', false);
+          x.setRequestHeader('content-type', 'application/json');
+          x.send(JSON.stringify({ context: ctx, videoId, contentCheckOk: true, racyCheckOk: true }));
+          if (x.status === 200) {
+            const fresh = JSON.parse(x.responseText);
+            const t2 = fresh?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.[0];
+            if (t2?.baseUrl) transcript = fetchCaptionText(t2.baseUrl);
+          }
+        }
+      } catch {}
+    }
+
+    if (!transcript) return { ok: false, error: 'No transcript available (timedtext, get_transcript and player all failed)' };
     return {
       ok: true,
       transcript,
