@@ -165,7 +165,9 @@ function captureFunc() {
     }
 
     // rung 4: scrape the transcript panel if it's open
-    const domSegs = document.querySelectorAll('ytd-transcript-segment-renderer .segment-text');
+    let domSegs = document.querySelectorAll('ytd-transcript-segment-renderer .segment-text');
+    if (!domSegs.length)
+      domSegs = document.querySelectorAll('ytd-transcript-segment-renderer yt-formatted-string.segment-text, ytd-transcript-segment-list-renderer yt-formatted-string');
     let domCount = 0;
     if (!transcript && domSegs.length) {
       transcript = dedupe([...domSegs].map((n) => n.textContent));
@@ -191,24 +193,35 @@ function captureFunc() {
   return { ok: true, transcript, title: document.title, url: location.href, source: 'page' };
 }
 
-// Kicks open the transcript panel so rung 4 (DOM scrape) has data to read.
-// Sync, best-effort: expands the description, clicks "Show transcript".
-function openTranscriptFunc() {
-  const expander = document.querySelector('#description-inline-expander #expand, ytd-watch-metadata #expand');
+// Phase 1: expand the description — the "Show transcript" button only exists
+// inside the expanded description.
+function expandDescriptionFunc() {
+  const expander = document.querySelector('#description-inline-expander #expand, ytd-watch-metadata #expand, tp-yt-paper-button#expand');
   if (expander) { try { expander.click(); } catch {} }
+  return !!expander;
+}
+
+// Phase 2: click "Show transcript" (only after phase 1 rendered it). If the
+// transcript panel is already showing, don't touch it.
+function clickTranscriptFunc() {
+  if (document.querySelector('ytd-transcript-renderer')) return 'already-open';
   const btn =
     document.querySelector('ytd-video-description-transcript-section-renderer button') ||
     [...document.querySelectorAll('button[aria-label]')].find((b) => /transcript/i.test(b.getAttribute('aria-label') || ''));
-  if (btn) { try { btn.click(); } catch {} }
-  return !!btn;
+  if (btn) { try { btn.click(); } catch {} return 'clicked'; }
+  return 'no-button';
 }
 
 async function captureTab(tabId) {
   // For YouTube: make the site's own UI fetch the transcript (network rungs are
-  // pot-gated), give the panel a moment to render, then capture.
+  // pot-gated). Each phase needs its own injection + wait: the "Show transcript"
+  // button doesn't exist until the description has expanded, and the panel
+  // doesn't render until the click.
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: openTranscriptFunc });
-    await new Promise((r) => setTimeout(r, 2000));
+    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: expandDescriptionFunc });
+    await new Promise((r) => setTimeout(r, 800));
+    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: clickTranscriptFunc });
+    await new Promise((r) => setTimeout(r, 2500));
   } catch {}
   let injected;
   try {
