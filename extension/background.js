@@ -1,5 +1,6 @@
-// parseJson3 lives in lib/parse.mjs (unit-tested); the in-page captureFunc
-// duplicates it because injected functions must be self-contained.
+// parseJson3 lives in lib/parse.mjs (unit-tested); the SW fetches the caption
+// track and parses it here.
+import { parseJson3 } from './lib/parse.mjs';
 
 const DEFAULTS = {
   companionUrl: 'http://localhost:7781/ingest',
@@ -14,12 +15,11 @@ const settings = async () => ({ ...DEFAULTS, ...await chrome.storage.local.get(O
 const slugify = (t) =>
   t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'capture';
 
-// Injected into the page's MAIN world; must be fully self-contained.
-// YouTube caption fetch happens here (same-origin) because a service-worker
-// fetch would be CORS-blocked without youtube host permissions.
-// NOTE: the json3 parsing below is duplicated from lib/parse.mjs (which is
-// unit-tested) — injected functions must be self-contained, keep in sync.
-async function captureFunc() {
+// Injected into the page's MAIN world; must be fully self-contained AND
+// synchronous (async funcs' promises are not reliably awaited by executeScript
+// in the MAIN world). Caption fetching happens in the service worker, which
+// bypasses CORS for hosts in manifest host_permissions.
+function captureFunc() {
   const isYT = /(^|\.)youtube\.com$/.test(location.hostname);
   if (isYT) {
     let pr = null;
@@ -29,19 +29,9 @@ async function captureFunc() {
     }
     const track = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.[0];
     if (!track) return { ok: false, error: 'No captions available on this video' };
-    const r = await fetch(track.baseUrl + '&fmt=json3');
-    if (!r.ok) return { ok: false, error: `Caption fetch failed (${r.status})` };
-    const data = await r.json();
-    const lines = (data.events || [])
-      .map((e) => (e.segs || []).map((s) => s.utf8 || '').join('').replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-    const out = [];
-    for (const l of lines) if (l !== out[out.length - 1]) out.push(l);
-    const transcript = out.join(' ');
-    if (!transcript) return { ok: false, error: 'Caption track was empty' };
     return {
       ok: true,
-      transcript,
+      captionUrl: track.baseUrl,
       title: pr?.videoDetails?.title || document.title,
       url: location.href,
       source: 'youtube',
@@ -54,13 +44,25 @@ async function captureFunc() {
 }
 
 async function captureTab(tabId) {
-  const [injected] = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: captureFunc,
-  });
+  let injected;
+  try {
+    [injected] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: captureFunc,
+    });
+  } catch (e) {
+    return { ok: false, error: `Injection failed: ${e.message}` };
+  }
   const meta = injected?.result;
   if (!meta) return { ok: false, error: 'Could not access the page' };
+  if (!meta.ok) return meta;
+  if (meta.captionUrl) {
+    const r = await fetch(meta.captionUrl + '&fmt=json3'); // host permission → no CORS
+    if (!r.ok) return { ok: false, error: `Caption fetch failed (${r.status})` };
+    meta.transcript = parseJson3(await r.json());
+    if (!meta.transcript) return { ok: false, error: 'Caption track was empty' };
+  }
   return meta;
 }
 
@@ -118,7 +120,9 @@ async function sendCapture(tabId) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type !== 'capture') return;
-  sendCapture(msg.tabId).then(sendResponse);
+  sendCapture(msg.tabId)
+    .then(sendResponse)
+    .catch((e) => sendResponse({ ok: false, error: e.message }));
   return true; // keep the message channel open for the async response
 });
 

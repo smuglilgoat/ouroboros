@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Capture YouTube transcripts / page text into your Obsidian wiki (GitHub + opencode ingest).",
   "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
-  "host_permissions": ["https://api.github.com/*", "http://localhost:7781/*"],
+  "host_permissions": ["https://api.github.com/*", "http://localhost:7781/*", "https://www.youtube.com/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_popup": "popup.html" },
   "options_page": "options.html"
