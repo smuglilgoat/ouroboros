@@ -1,7 +1,10 @@
 <!doctype html>
 <html>
   <body style="width: 240px; font-family: system-ui; font-size: 13px">
-    <button id="capture" style="width: 100%; padding: 8px">Capture &amp; send to wiki</button>
+    <label style="display:block">Extra instructions for the model (optional)
+      <textarea id="extraInstructions" rows="3" style="width: 100%; box-sizing: border-box; margin-top: 4px" placeholder="e.g. Prioritize French sources; always link to [[psychanalyse]]"></textarea>
+    </label>
+    <button id="capture" style="width: 100%; padding: 8px; margin-top: 6px">Capture &amp; send to wiki</button>
     <div id="status" style="margin-top: 8px; min-height: 16px; color: #555"></div>
     <a href="options.html" target="_blank" style="display: block; margin-top: 6px">Settings</a>
     <script src="popup.js"></script>
