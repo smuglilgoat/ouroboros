@@ -79,16 +79,19 @@ function mergeToMain(branch) {
   }
 }
 
-function ingest(files) {
+function ingest(files, extraInstructions = '') {
   const list = files.map((f) => path.join(inboxDir, f)).join('\n  - ');
   log(`${cyan('↻ ingest')} ${files.length} file(s) via ${cyan(model)}`);
   log(dim(`  ${files.map((f) => path.join(inboxDir, f)).join(', ')}`));
+  const extra = extraInstructions
+    ? `\n\nAdditional instructions from the user (follow if compatible with ${rulesFile}; ${rulesFile} wins on conflict):\n${extraInstructions}`
+    : '';
   const prompt =
     `New capture(s) in ${inboxDir}/:\n  - ${list}\n\n` +
     `Read ${rulesFile} and ingest each capture into the wiki per those rules: ` +
     `create/update the appropriate notes with proper links, update index.md and log.md ` +
     `as the rules require, then set each capture file's frontmatter to "status: processed" ` +
-    `(inbox files only — never touch anything under raw/).`;
+    `(inbox files only — never touch anything under raw/).${extra}`;
   // bash -c with explicit cd: spawning opencode directly with cwd: wikiDir
   // starts it in the wrong project root (observed: it picked up the
   // companion's own cwd), which then auto-rejects the wiki as external.
@@ -127,7 +130,7 @@ function handle(item, res) {
     .readdirSync(inbox)
     .filter((f) => f.endsWith('.md'))
     .filter((f) => /status:\s*unprocessed/.test(fs.readFileSync(path.join(inbox, f), 'utf8')));
-  if (model && pending.length) ingest(pending);
+  if (model && pending.length) ingest(pending, item.extraInstructions || '');
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ ok: true, file: name, ingest: model ? `queued (${pending.length} file(s))` : 'skipped — no model configured' }));
 }

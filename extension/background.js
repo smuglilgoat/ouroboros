@@ -3,6 +3,7 @@ const DEFAULTS = {
   repo: '', // "owner/repo"
   branch: '', // empty = repo default
   inboxDir: 'inbox',
+  extraInstructions: '', // per-capture hints passed to the ingest model
   pat: '',
 };
 
@@ -248,7 +249,7 @@ function toCompanion(s, meta) {
   return fetch(s.companionUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...meta, capturedAt: new Date().toISOString() }),
+    body: JSON.stringify({ ...meta, capturedAt: new Date().toISOString(), extraInstructions: s.extraInstructions || '' }),
   })
     .then(async (r) => {
       if (!r.ok) return null;
