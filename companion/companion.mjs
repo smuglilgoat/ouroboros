@@ -97,7 +97,10 @@ function ingest(files, extraInstructions = '') {
   // companion's own cwd), which then auto-rejects the wiki as external.
   const p = spawn(
     'bash',
-    ['-c', 'cd "$1" && exec opencode run --model "$2" "$3"', '_', wikiDir, model, prompt],
+    // --auto: headless runs can't answer permission prompts; auto-approve
+    // (fixes external_directory auto-rejects for cross-repo reads and cuts
+    // latency from wasted permission round-trips)
+    ['-c', 'cd "$1" && exec opencode run --auto --model "$2" "$3"', '_', wikiDir, model, prompt],
     { stdio: 'inherit' }
   );
   p.on('exit', (code) => {
